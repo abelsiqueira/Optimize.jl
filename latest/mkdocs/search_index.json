@@ -1,0 +1,14 @@
+{
+    "docs": [
+        {
+            "location": "/", 
+            "text": "Optimize.jl\n\n\nDocumentation for Optimize.jl", 
+            "title": "Home"
+        }, 
+        {
+            "location": "/#optimizejl", 
+            "text": "Documentation for Optimize.jl", 
+            "title": "Optimize.jl"
+        }
+    ]
+}
