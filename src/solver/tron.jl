@@ -161,21 +161,31 @@ function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
 
     nsmall = 0
 
+    # Projected Newton Step
+    exit_optimal = false
+    exit_pcg = false
+    exit_itmax = false
     cgtol = max(ϵ, min(0.7 * cgtol, 0.01 * π))
-
-    while Δcur < Δ
+    newton_itmax = div(n, 3)
+    newton_iter = 0
+    while !(exit_optimal || exit_pcg || exit_itmax)
       A = active(xcur, l, u)
       if length(A) == nlp.meta.nvar
-        break
+        exit_optimal = true
+        continue
       end
       I = setdiff(1:n, A)
       Z = ExtensionOperator(I, n)
       v = H * dcur + gx
-      if norm(Z'*v) < ϵ
-        break
+      if norm(Z'*v) < ϵ * norm(Z'*gx)
+        exit_optimal = true
+        continue
       end
       st, stats = Krylov.cg(Z'*H*Z, -(Z'*v), radius=Δ-Δcur, atol=cgtol, rtol=0.0, itmax=max(2*n, 50))
       st = Z*st
+      # TODO: When Krylov.stats get iter, sum number of cg iters.
+      newton_iter += 1
+      # Projected line search
       β = 1.0
       P!(wβ, xcur, β, st)
       if norm(wβ) < ϵ
@@ -189,12 +199,16 @@ function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
       BLAS.axpy!(1.0, wβ, dcur)
       qdcur = q(dcur)
       BLAS.axpy!(1.0, wβ, xcur)
-      if norm(wβ) < 1e-3*Δ
-        nsmall += 1
-        if nsmall == 3
-          break
-        end
+
+      v = H * dcur + gx
+      if norm(Z'*v) <= cgtol * norm(Z'*gx)
+        exit_optimal = true
+      elseif stats.status == "on trust-region boundary"
+        exit_pcg = true
+      elseif newton_iter >= newton_itmax
+        exit_itmax = true
       end
+
     end
 
     # Candidate
