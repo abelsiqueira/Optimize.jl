@@ -1,6 +1,5 @@
 using Optimize
 using OptimizationProblems
-using JuMP
 using NLPModels
 
 probs = filter(name -> name != :OptimizationProblems, names(OptimizationProblems))

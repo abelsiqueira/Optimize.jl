@@ -1,22 +1,35 @@
 using Optimize
+using FactCheck
 using NLPModels
 using AmplNLReader
 using OptimizationProblems
 using Compat
 import Compat.String
 
+# Test TRON
+include("solvers/tron.jl")
+
 models = [AmplModel("dixmaanj.nl"), MathProgNLPModel(dixmaanj(), name="dixmaanj")]
+
 @static if is_unix()
   using CUTEst
   push!(models, CUTEstModel("DIXMAANJ", "-param", "M=30"))
 end
-solvers = [:trunk, :lbfgs]
+solvers = [:trunk, :lbfgs, :tron]
 
 for model in models
   for solver in solvers
     stats = run_solver(solver, model, verbose=false)
     assert(all([stats...] .>= 0))
     reset!(model)
+  end
+end
+
+@static if is_unix()
+  for m in models
+    if typeof(m) == CUTEst.CUTEstModel
+      cutest_finalize(m)
+    end
   end
 end
 
