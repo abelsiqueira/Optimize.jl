@@ -1,5 +1,7 @@
+# Some parts of this code were adapted from
+# https://github.com/PythonOptimizers/NLP.py/blob/develop/nlp/optimize/tron.py
+
 using LinearOperators, NLPModels
-# A trust-region solver for unconstrained optimization with bounds
 
 export tron
 
@@ -16,8 +18,18 @@ function active(x, l, u; ϵlu::Real = 1e-6)
   return A
 end
 
+"""
+    tron(nlp)
+
+A trust-region solver for bound-constrained optimization.
+
+A pure Julia implementation of TRON as described in
+
+Chih-Jen Lin and Jorge J. Moré, *Newton's Method for Large Bound-Constrained
+Optimization Problems*, SIAM J. Optim., 9(4), 1100–1127, 1999.
+"""
 function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
-    μ₁ :: Real=1.0, σ :: Real=1.2, verbose=false, itmax :: Integer=100000,
+    μ₁ :: Real=1.0, σ :: Real=10, verbose=false, itmax :: Integer=100000,
     timemax :: Real=60, mem :: Integer=5, atol :: Real=1e-8, rtol :: Real=1e-6,
     σ₁ = 0.25, σ₂ = 0.5, σ₃ = 4.0, η₀ = 1e-3, η₁ = 0.25, η₂ = 0.75)
   l = nlp.meta.lvar
@@ -42,9 +54,9 @@ function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
   # Preallocation
   xcur = zeros(n)
   dcur = zeros(n)
-  sα = zeros(n)
-  sαn = zeros(n)
-  sαp = zeros(n)
+  s = zeros(n)
+  sn = zeros(n)
+  sp = zeros(n)
   wβ = zeros(n)
   gpx = zeros(n)
 
@@ -73,55 +85,84 @@ function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
     # Model
     H = hess_op(nlp, x)
     q(d) = 0.5*dot(d, H * d) + dot(d, gx)
+    q(d, Hd, slope) = 0.5*dot(d, Hd) + slope
     # Projected step
-    P!(sα, x, -α, gx)
-    copy!(sαp, sα)
+    P!(s, x, -α, gx)
+    copy!(sp, s)
 
     # TODO: Compute the breakpoints and use them to prevent computing hprod too
     # often
+
     # Find α satisfying the decrease condition increasing if it's
     # possible, or decreasing if necessary.
-    if q(sα) <= μ₀*dot(gx,sα) && norm(sα) <= μ₁*Δ
-      while q(sα) <= μ₀*dot(gx,sα) && norm(sα) <= μ₁*Δ
-        α *= σ
-        P!(sαn, x, -α, gx)
-        # Check if the step is in a corner.
-        norm(sαn - sα) < 1e-12 && break
-        copy!(sαp, sα)
-        copy!(sα, sαn)
-        if α > 1e12
-          stalled = true
-          status = "α too large"
-          break
-        end
-      end
-      copy!(sα, sαp)
-      α /= σ
+    s_norm = norm(s)
+    if s_norm > μ₁*Δ
+      interp = true
     else
-      while q(sα) > μ₀*dot(gx,sα) || norm(sα) > μ₁*Δ
+      slope = dot(s, gx)
+      Hs = H * s
+      interp = q(s, Hs, slope) >= μ₀ * slope
+    end
+
+    if interp
+      search = true
+      while search
         α /= σ
-        copy!(sαp, sα)
-        P!(sα, x, -α, gx)
+        P!(s, x, -α, gx)
+        s_norm = norm(s)
+        if s_norm <= μ₁*Δ
+          Hs = H * s
+          slope = dot(s, gx)
+          search = q(s, Hs, slope) > μ₀ * slope
+        end
         if α < 1e-24
           stalled = true
           status = "α too small"
           break
         end
       end
+    else
+      search = true
+      copy!(sp, s)
+      while search
+        α *= σ
+        P!(s, x, -α, gx)
+        # Check if the step is in a corner.
+        norm(sp - s) < 1e-12 && break
+        s_norm = norm(s)
+        if s_norm <= μ₁*Δ
+          Hs = H * s
+          slope = dot(s, gx)
+          if q(s, Hs, slope) < μ₀ * slope
+            copy!(sp, s)
+          else
+            search = false
+          end
+        else
+          search = false
+        end
+        if α > 1e12
+          stalled = true
+          status = "α too large"
+          break
+        end
+      end
+      copy!(s, sp)
     end
 
     stalled && break
 
-    Δcur = norm(sα)
-    copy!(dcur, sα)
+    Δcur = norm(s)
+    copy!(dcur, s)
     copy!(xcur, x)
-    BLAS.axpy!(1.0, sα, xcur)
+    BLAS.axpy!(1.0, s, xcur)
 
     qdcur = q(dcur)
 
     nsmall = 0
 
     cgtol = max(ϵ, min(0.7 * cgtol, 0.01 * π))
+
     while Δcur < Δ
       A = active(xcur, l, u)
       if length(A) == nlp.meta.nvar

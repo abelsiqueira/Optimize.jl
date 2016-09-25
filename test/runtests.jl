@@ -8,6 +8,7 @@ import Compat.String
 
 # Test TRON
 include("solvers/tron.jl")
+FactCheck.exitstatus()
 
 models = [AmplModel("dixmaanj.nl"), MathProgNLPModel(dixmaanj(), name="dixmaanj")]
 
