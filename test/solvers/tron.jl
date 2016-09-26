@@ -103,8 +103,6 @@ facts("Fixed variables") do
   end
 end
 
-FactCheck.exitstatus()
-
 facts("Larger test") do
   n = 10
   Λ = linspace(1e-2, 1.0, n)
@@ -157,11 +155,11 @@ facts("Larger test") do
       @fact π --> roughly(0.0, 1e-3)
       @fact optimal --> true
       @fact iter --> less_than_or_equal(10000)
+      @fact status --> "first-order stationary"
     end
   end
 end
 
-FactCheck.exitstatus()
 
 facts("Problems") do
   n = 10
@@ -197,8 +195,6 @@ facts("Problems") do
     @fact optimal --> true
   end
 end
-
-FactCheck.exitstatus()
 
 facts("Scaling") do
   n = 30
@@ -238,5 +234,3 @@ facts("CUTEst") do
   end
 end
 
-
-FactCheck.exitstatus()
