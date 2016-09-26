@@ -7,6 +7,7 @@ const deps = Dict{String, String}(
               "NLPModels" => "develop",
               "OptimizationProblems" => "master",
               "Krylov" => "develop",
+              "LinearOperators" => "develop",
               "AmplNLReader" => "develop",
               "Profiles" => "master")
 

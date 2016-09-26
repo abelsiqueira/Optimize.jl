@@ -5,7 +5,7 @@ using LinearOperators, NLPModels
 
 export tron
 
-function active(x, l, u; ϵlu::Real = 1e-6)
+function active(x, l, u; ϵlu::Real = 1e-8)
   A = Int[]
   n = length(x)
   for i = 1:n
@@ -43,29 +43,21 @@ function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
   start_time = time()
   el_time = 0.0
 
-  # Projection
-  P!(y, x, a, v) = begin # y = P[x + a*v] - x, where l ≦ x ≦ u
-    for i = 1:n
-      y[i] = a*v[i] > 0 ? min(x[i]+a*v[i], u[i])-x[i] : max(x[i]+a*v[i], l[i])-x[i]
-    end
-    return y
-  end
-
   # Preallocation
   xcur = zeros(n)
   dcur = zeros(n)
   s = zeros(n)
   sn = zeros(n)
   sp = zeros(n)
-  wβ = zeros(n)
   gpx = zeros(n)
 
-  x = max(min(nlp.meta.x0, u), l)
+  x = project(nlp.meta.x0, l, u)
   gx = g(x)
+  qs = Inf
   qdcur = Inf
 
   # Optimality measure
-  P!(gpx, x, -1.0, gx)
+  project_step!(gpx, x, -gx, l, u)
   πx = norm(gpx)
   ϵ = atol + rtol * π
   cgtol = 1.0
@@ -84,15 +76,12 @@ function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
   while !(optimal || tired || stalled)
     # Model
     H = hess_op(nlp, x)
-    q(d) = 0.5*dot(d, H * d) + dot(d, gx)
     q(d, Hd, slope) = 0.5*dot(d, Hd) + slope
     # Projected step
-    P!(s, x, -α, gx)
+    project_step!(s, x, -α*gx, l, u)
     copy!(sp, s)
 
-    # TODO: Compute the breakpoints and use them to prevent computing hprod too
-    # often
-
+    _, _, brkmax = breakpoints(x, -gx, l, u)
     # Find α satisfying the decrease condition increasing if it's
     # possible, or decreasing if necessary.
     s_norm = norm(s)
@@ -101,19 +90,21 @@ function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
     else
       slope = dot(s, gx)
       Hs = H * s
-      interp = q(s, Hs, slope) >= μ₀ * slope
+      qs = q(s, Hs, slope)
+      interp = qs >= μ₀ * slope
     end
 
     if interp
       search = true
       while search
         α /= σ
-        P!(s, x, -α, gx)
+        project_step!(s, x, -α*gx, l, u)
         s_norm = norm(s)
         if s_norm <= μ₁*Δ
           Hs = H * s
           slope = dot(s, gx)
-          search = q(s, Hs, slope) > μ₀ * slope
+          qs = q(s, Hs, slope)
+          search = qs > μ₀ * slope
         end
         if α < 1e-24
           stalled = true
@@ -124,16 +115,16 @@ function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
     else
       search = true
       copy!(sp, s)
-      while search
+      while search && α < brkmax
         α *= σ
-        P!(s, x, -α, gx)
+        project_step!(s, x, -α*gx, l, u)
         # Check if the step is in a corner.
-        norm(sp - s) < 1e-12 && break
         s_norm = norm(s)
         if s_norm <= μ₁*Δ
           Hs = H * s
           slope = dot(s, gx)
-          if q(s, Hs, slope) < μ₀ * slope
+          qs = q(s, Hs, slope)
+          if qs < μ₀ * slope
             copy!(sp, s)
           else
             search = false
@@ -148,6 +139,9 @@ function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
         end
       end
       copy!(s, sp)
+      Hs = H * s
+      slope = dot(s, gx)
+      qs = q(s, Hs, slope)
     end
 
     stalled && break
@@ -156,17 +150,17 @@ function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
     copy!(dcur, s)
     copy!(xcur, x)
     BLAS.axpy!(1.0, s, xcur)
+    project!(xcur, x + s, l, u)
 
-    qdcur = q(dcur)
-
+    qdcur = qs
     nsmall = 0
 
     # Projected Newton Step
     exit_optimal = false
-    exit_pcg = false
+    exit_pcg = Δcur >= Δ
     exit_itmax = false
     cgtol = max(ϵ, min(0.7 * cgtol, 0.01 * π))
-    newton_itmax = div(n, 3)
+    newton_itmax = n
     newton_iter = 0
     while !(exit_optimal || exit_pcg || exit_itmax)
       A = active(xcur, l, u)
@@ -174,31 +168,57 @@ function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
         exit_optimal = true
         continue
       end
-      I = setdiff(1:n, A)
-      Z = ExtensionOperator(I, n)
+      Z = ExtensionOperator(setdiff(1:n, A), n)
       v = H * dcur + gx
-      if norm(Z'*v) < ϵ * norm(Z'*gx)
+      gfree = Z'*gx
+      vfree = Z'*v
+      if norm(vfree) < ϵ * norm(gfree)
         exit_optimal = true
         continue
       end
-      st, stats = Krylov.cg(Z'*H*Z, -(Z'*v), radius=Δ-Δcur, atol=cgtol, rtol=0.0, itmax=max(2*n, 50))
-      st = Z*st
+      ZHZ = Z' * H * Z
+      st, stats = Krylov.cg(ZHZ, -vfree, radius=Δ-Δcur, atol=cgtol, rtol=0.0, itmax=max(2*n, 50))
       # TODO: When Krylov.stats get iter, sum number of cg iters.
       newton_iter += 1
       # Projected line search
+      st = Z*st
       β = 1.0
-      P!(wβ, xcur, β, st)
-      if norm(wβ) < ϵ
-        break
+      project_step!(s, xcur, β*st, l, u)
+      if norm(s) < ϵ
+        exit_pcg = true
+        continue
       end
-      while q(dcur + wβ) > qdcur + μ₀*min(dot(v, wβ), 0)
+      Hs = H * s
+      slope = dot(v, s)
+      qs = q(s, Hs, slope)
+      _, brkmin, _ = breakpoints(xcur, st, l, u)
+
+      search = true
+      while search && β > brkmin
+        if qs <= μ₀*dot(v, s)
+          search = false
+          continue
+        end
         β *= 0.9
-        P!(wβ, xcur, β, st)
+        project_step!(s, xcur, β*st, l, u)
+        Hs = H * s
+        slope = dot(v, s)
+        qs = q(s, Hs, slope)
       end
-      Δcur += norm(wβ)
-      BLAS.axpy!(1.0, wβ, dcur)
-      qdcur = q(dcur)
-      BLAS.axpy!(1.0, wβ, xcur)
+      if β < 1.0 && β < brkmin
+        β = brkmin
+        project_step!(s, xcur, β*st, l, u)
+        Hs = H * s
+        slope = dot(v, s)
+        qs = q(s, Hs, slope)
+      end
+
+      BLAS.axpy!(1.0, s, dcur)
+      BLAS.axpy!(1.0, s, xcur)
+
+      qdcur += qs
+
+      Δcur = norm(dcur)
 
       v = H * dcur + gx
       if norm(Z'*v) <= cgtol * norm(Z'*gx)
@@ -234,7 +254,7 @@ function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
 
       y = gx
       gx = g(x)
-      P!(gpx, x, -1.0, gx)
+      project_step!(gpx, x, -gx, l, u)
       πx = norm(gpx)
     end
 
@@ -275,3 +295,59 @@ function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
   return x, f(x), πx, iter, optimal, tired, status, el_time
 end
 
+"""
+    nbrk, brkmin, brkmax = breakpoints(x, d, l, u)
+
+Find the smallest and largest values of α such that x + αd lies on the boundary.
+We assume x is feasible.
+"""
+function breakpoints(x, d, l, u)
+  n = length(x)
+  pos = find( (d .> 0) & (x .< u) )
+  neg = find( (d .< 0) & (x .> l) )
+
+  nbrk = length(pos) + length(neg)
+  nbrk == 0 && return 0, 0, 0
+
+  brkmin = Inf
+  brkmax = 0.0
+  if length(pos) > 0
+    steps = (u[pos] - x[pos])./d[pos]
+    @assert all(steps .> 0)
+    brkmin = min(brkmin, minimum(steps))
+    brkmax = max(brkmax, maximum(steps))
+  end
+  if length(neg) > 0
+    steps = (l[neg] - x[neg])./d[neg]
+    @assert all(steps .> 0)
+    brkmin = min(brkmin, minimum(steps))
+    brkmax = max(brkmax, maximum(steps))
+  end
+  return nbrk, brkmin, brkmax
+end
+
+function project(x, l, u)
+  y = zeros(x)
+  return project!(y, x, l, u)
+end
+
+function project!(y, x, l, u)
+  n = length(x)
+  for i = 1:n
+    y[i] = max(l[i], min(x[i], u[i]))
+  end
+  return y
+end
+
+function project_step(x, d, l, u)
+  y = zeros(x)
+  return project_step!(y, x, d, l, u)
+end
+
+function project_step!(y, x, d, l, u)
+  n = length(x)
+  for i = 1:n
+    y[i] = max(l[i], min(x[i] + d[i], u[i])) - x[i]
+  end
+  return y
+end
