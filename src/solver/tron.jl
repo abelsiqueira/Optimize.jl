@@ -46,15 +46,10 @@ function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
   # Preallocation
   xcur = zeros(n)
   dcur = zeros(n)
-  s = zeros(n)
-  sn = zeros(n)
-  sp = zeros(n)
   gpx = zeros(n)
 
   x = project(nlp.meta.x0, l, u)
   gx = g(x)
-  qs = Inf
-  qdcur = Inf
 
   # Optimality measure
   project_step!(gpx, x, -gx, l, u)
@@ -76,70 +71,12 @@ function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
   while !(optimal || tired || stalled)
     # Model
     H = hess_op(nlp, x)
+    
+    s, qs, α, Hs, slope = projected_cauchy_step(x, H, gx, l, u, Δ, α=α, μ₀=μ₀, μ₁=μ₁)
+
     q(d, Hd, slope) = 0.5*dot(d, Hd) + slope
-    # Projected step
-    project_step!(s, x, -α*gx, l, u)
-    copy!(sp, s)
 
-    _, _, brkmax = breakpoints(x, -gx, l, u)
-    # Find α satisfying the decrease condition increasing if it's
-    # possible, or decreasing if necessary.
-    s_norm = norm(s)
-    if s_norm > μ₁*Δ
-      interp = true
-    else
-      slope = dot(s, gx)
-      Hs = H * s
-      qs = q(s, Hs, slope)
-      interp = qs >= μ₀ * slope
-    end
-
-    if interp
-      search = true
-      while search
-        α /= σ
-        project_step!(s, x, -α*gx, l, u)
-        s_norm = norm(s)
-        if s_norm <= μ₁*Δ
-          Hs = H * s
-          slope = dot(s, gx)
-          qs = q(s, Hs, slope)
-          search = qs > μ₀ * slope
-        end
-        if α < 1e-24
-          stalled = true
-          status = "α too small"
-          break
-        end
-      end
-    else
-      search = true
-      copy!(sp, s)
-      while search && α < brkmax
-        α *= σ
-        project_step!(s, x, -α*gx, l, u)
-        # Check if the step is in a corner.
-        s_norm = norm(s)
-        if s_norm <= μ₁*Δ
-          Hs = H * s
-          slope = dot(s, gx)
-          qs = q(s, Hs, slope)
-          if qs < μ₀ * slope
-            copy!(sp, s)
-          else
-            search = false
-          end
-        else
-          search = false
-        end
-      end
-      copy!(s, sp)
-      Hs = H * s
-      slope = dot(s, gx)
-      qs = q(s, Hs, slope)
-    end
-
-    stalled && break
+    #stalled && break
 
     Δcur = norm(s)
     copy!(dcur, s)
@@ -148,83 +85,11 @@ function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
     project!(xcur, x + s, l, u)
 
     qdcur = qs
-    nsmall = 0
 
-    # Projected Newton Step
-    exit_optimal = false
-    exit_pcg = Δcur >= Δ
-    exit_itmax = false
     cgtol = max(ϵ, min(0.7 * cgtol, 0.01 * π))
-    newton_itmax = n
-    newton_iter = 0
-    while !(exit_optimal || exit_pcg || exit_itmax)
-      A = active(xcur, l, u)
-      if length(A) == nlp.meta.nvar
-        exit_optimal = true
-        continue
-      end
-      Z = ExtensionOperator(setdiff(1:n, A), n)
-      v = H * dcur + gx
-      gfree = Z'*gx
-      vfree = Z'*v
-      if norm(vfree) < ϵ * norm(gfree)
-        exit_optimal = true
-        continue
-      end
-      ZHZ = Z' * H * Z
-      st, stats = Krylov.cg(ZHZ, -vfree, radius=Δ-Δcur, atol=cgtol, rtol=0.0, itmax=max(2*n, 50))
-      # TODO: When Krylov.stats get iter, sum number of cg iters.
-      newton_iter += 1
-      # Projected line search
-      st = Z*st
-      β = 1.0
-      project_step!(s, xcur, β*st, l, u)
-      if norm(s) < ϵ
-        exit_pcg = true
-        continue
-      end
-      Hs = H * s
-      slope = dot(v, s)
-      qs = q(s, Hs, slope)
-      _, brkmin, _ = breakpoints(xcur, st, l, u)
-
-      search = true
-      while search && β > brkmin
-        if qs <= μ₀*dot(v, s)
-          search = false
-          continue
-        end
-        β *= 0.9
-        project_step!(s, xcur, β*st, l, u)
-        Hs = H * s
-        slope = dot(v, s)
-        qs = q(s, Hs, slope)
-      end
-      if β < 1.0 && β < brkmin
-        β = brkmin
-        project_step!(s, xcur, β*st, l, u)
-        Hs = H * s
-        slope = dot(v, s)
-        qs = q(s, Hs, slope)
-      end
-
-      BLAS.axpy!(1.0, s, dcur)
-      BLAS.axpy!(1.0, s, xcur)
-
-      qdcur += qs
-
-      Δcur = norm(dcur)
-
-      v = H * dcur + gx
-      if norm(Z'*v) <= cgtol * norm(Z'*gx)
-        exit_optimal = true
-      elseif stats.status == "on trust-region boundary"
-        exit_pcg = true
-      elseif newton_iter >= newton_itmax
-        exit_itmax = true
-      end
-
-    end
+    # Projected Newton Step
+    xcur, dcur, qN = projected_newton_step(x, H, gx, s, l, u, Δ, cgtol=cgtol,
+                                           μ₀=μ₀)
 
     # Candidate
     fxcur = f(xcur)
@@ -357,4 +222,161 @@ function project_step!(y, x, d, l, u)
     y[i] = max(l[i], min(x[i] + d[i], u[i])) - x[i]
   end
   return y
+end
+
+function projected_cauchy_step(x::Vector, H::LinearOperator, gx::Vector,
+                               l::Vector, u::Vector, Δ::Real; α::Real=1.0,
+                               σ::Real=10.0, μ₀::Real=1e-2, μ₁::Real=1.0)
+  q(d, Hd, slope) = 0.5*dot(d, Hd) + slope
+
+  s = zeros(x)
+  project_step!(s, x, -α*gx, l, u)
+  sp = copy(s)
+
+  _, _, brkmax = breakpoints(x, -gx, l, u)
+  # Find α satisfying the decrease condition increasing if it's
+  # possible, or decreasing if necessary.
+  s_norm = norm(s)
+  if s_norm > μ₁*Δ
+    interp = true
+  else
+    slope = dot(s, gx)
+    Hs = H * s
+    qs = q(s, Hs, slope)
+    interp = qs >= μ₀ * slope
+  end
+
+  if interp
+    search = true
+    while search
+      α /= σ
+      project_step!(s, x, -α*gx, l, u)
+      s_norm = norm(s)
+      if s_norm <= μ₁*Δ
+        Hs = H * s
+        slope = dot(s, gx)
+        qs = q(s, Hs, slope)
+        search = qs > μ₀ * slope
+      end
+      # TODO: Check viability of not using this
+      #=
+      if α < 1e-24
+        stalled = true
+        status = "α too small"
+        break
+      end
+      =#
+    end
+  else
+    search = true
+    copy!(sp, s)
+    while search && α < brkmax
+      α *= σ
+      project_step!(s, x, -α*gx, l, u)
+      # Check if the step is in a corner.
+      s_norm = norm(s)
+      if s_norm <= μ₁*Δ
+        Hs = H * s
+        slope = dot(s, gx)
+        qs = q(s, Hs, slope)
+        if qs < μ₀ * slope
+          copy!(sp, s)
+        else
+          search = false
+        end
+      else
+        search = false
+      end
+    end
+    copy!(s, sp)
+    Hs = H * s
+    slope = dot(s, gx)
+    qs = q(s, Hs, slope)
+  end
+
+  return s, qs, α, Hs, slope
+end
+
+function projected_newton_step(x::Vector, H::LinearOperator, gx::Vector,
+                               s::Vector, l::Vector, u::Vector, Δ::Real)
+  exit_optimal = false
+  exit_pcg = Δcur >= Δ
+  exit_itmax = false
+
+  newton_itmax = nlp.meta.nvar
+  newton_iter = 0
+  qN = 0.0
+
+  while !(exit_optimal || exit_pcg || exit_itmax)
+    A = active(x, l, u)
+    if length(A) == nlp.meta.nvar
+      exit_optimal = true
+      continue
+    end
+    Z = ExtensionOperator(setdiff(1:nlp.meta.nvar, A), nlp.meta.nvar)
+    v = H * s + gx
+    gfree = Z'*gx
+    vfree = Z'*v
+    if norm(vfree) < ϵ * norm(gfree)
+      exit_optimal = true
+      continue
+    end
+    ZHZ = Z' * H * Z
+    st, stats = Krylov.cg(ZHZ, -vfree, radius=Δ-Δcur, atol=cgtol, rtol=0.0,
+                          itmax=max(2*nlp.meta.nvar, 50))
+    # TODO: When Krylov.stats get iter, sum number of cg iters.
+    newton_iter += 1
+
+    # Projected line search
+    st = Z*st
+    β = 1.0
+    δ = project_step!(x, β*st, l, u)
+    if norm(δ) < ϵ
+      exit_pcg = true
+      continue
+    end
+    Hδ = H * δ
+    slope = dot(v, δ)
+    qδ = q(δ, Hs, slope)
+    _, brkmin, _ = breakpoints(x, st, l, u)
+
+    search = true
+    while search && β > brkmin
+      if qδ <= μ₀*dot(v, δ)
+        search = false
+        continue
+      end
+      β *= 0.9
+      project_step!(δ, x, β*st, l, u)
+      Hδ = H * δ
+      slope = dot(v, δ)
+      qδ = q(δ, Hδ, slope)
+    end
+    if β < 1.0 && β < brkmin
+      β = brkmin
+      project_step!(δ, x, β*st, l, u)
+      Hδ = H * δ
+      slope = dot(v, δ)
+      qδ = q(δ, Hδ, slope)
+    end
+
+    BLAS.axpy!(1.0, δ, s)
+    BLAS.axpy!(1.0, δ, x)
+
+    qN += qδ
+
+    Δcur = norm(s)
+
+    v = H * s + gx
+    if norm(Z'*v) <= cgtol * norm(Z'*gx)
+      exit_optimal = true
+    elseif stats.status == "on trust-region boundary"
+      exit_pcg = true
+    elseif newton_iter >= newton_itmax
+      exit_itmax = true
+    end
+
+  end
+
+  return x, s, qN
 end
