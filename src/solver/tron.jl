@@ -67,7 +67,7 @@ function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
 
   α = 1.0
   fx = f(x)
-  Δ = min(max(0.1, 0.1*norm(gx)), 100)
+  Δ = min(max(1.0, 0.1*norm(π)), 100)
   ρ = Inf
   if verbose
     @printf("%4s  %9s  %7s  %7s  %8s\n", "Iter", "f", "π", "Radius", "Ratio")
