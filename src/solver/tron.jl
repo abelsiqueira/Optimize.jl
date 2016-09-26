@@ -233,7 +233,7 @@ function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
 
     # Candidate
     fxcur = f(xcur)
-    slope = dot(dcur, gx)
+    # qdcur and slope should be correctly computed
 
     # Ratio
     try
@@ -252,10 +252,24 @@ function tron(nlp :: AbstractNLPModel; μ₀ :: Real=1e-2,
       copy!(x, xcur)
       fx = fxcur
 
-      y = gx
       gx = g(x)
       project_step!(gpx, x, -gx, l, u)
       πx = norm(gpx)
+    else
+      # Trust-region step is rejected; backtrack.
+      ls_function = C1LineFunction(nlp, x, dcur)
+      t, _, fxcur  = armijo_wolfe(ls_function, fx, slope, gx, bk_max=5, nbWM=0)
+      if fxcur < fx + 1e-4 * t * slope
+        dcur *= t
+        BLAS.axpy!(1.0, dcur, x)
+        fx = fxcur
+        gx = g(x)
+        project_step!(gpx, x, -gx, l, u)
+        πx = norm(gpx)
+      else
+        # The gradient is modified inside armijo_wolfe
+        gx = g(x)
+      end
     end
 
     # Update the trust region
@@ -313,13 +327,11 @@ function breakpoints(x, d, l, u)
   brkmax = 0.0
   if length(pos) > 0
     steps = (u[pos] - x[pos])./d[pos]
-    @assert all(steps .> 0)
     brkmin = min(brkmin, minimum(steps))
     brkmax = max(brkmax, maximum(steps))
   end
   if length(neg) > 0
     steps = (l[neg] - x[neg])./d[neg]
-    @assert all(steps .> 0)
     brkmin = min(brkmin, minimum(steps))
     brkmax = max(brkmax, maximum(steps))
   end

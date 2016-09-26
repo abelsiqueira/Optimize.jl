@@ -156,6 +156,7 @@ facts("Larger test") do
       @fact fx --> roughly(f(r), 1e-5)
       @fact π --> roughly(0.0, 1e-3)
       @fact optimal --> true
+      @fact iter --> less_than_or_equal(10000)
     end
   end
 end
@@ -221,7 +222,8 @@ facts("Scaling") do
 end
 
 facts("CUTEst") do
-  problems = ["DENSCHNA", "DENSCHNB", "DENSCHNC", "DENSCHND", "DENSCHNE", "DENSCHNF"]
+  problems = ["DENSCHNA", "DENSCHNB", "DENSCHNC", "DENSCHND", "DENSCHNE",
+              "DENSCHNF", "BDEXP", "MCCORMCK"]
   @printf("%8s  %5s  %4s  %9s  %9s  %9s  %6s  %6s  %s\n", "Problem", "n",
       "type", "f(x)", "π", "time", "it", "nf", "status")
   for p in problems
