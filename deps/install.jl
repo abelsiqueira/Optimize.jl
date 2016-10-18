@@ -17,9 +17,9 @@ function dep_installed(dep)
   try
     println("Installed?")
     s = Pkg.installed(dep)  # throws an error instead of returning false
-    println("Yes! >$s<")
+    println("Yes! $s<")
     println(Pkg.installed())
-    return true
+    return s != nothing
   catch
     println("No!")
     return false
