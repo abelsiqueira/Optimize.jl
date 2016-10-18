@@ -15,14 +15,18 @@ const unix_deps = Dict{String, String}(
 
 function dep_installed(dep)
   try
+    println("Installed?")
     Pkg.installed(dep)  # throws an error instead of returning false
+    println("Yes!")
     return true
   catch
+    println("No!")
     return false
   end
 end
 
 function dep_install(dep, branch)
+  println("Installing $dep")
   dep_installed(dep) || Pkg.clone("$home/$dep.jl.git")
   Pkg.checkout(dep, branch)
   Pkg.build(dep)

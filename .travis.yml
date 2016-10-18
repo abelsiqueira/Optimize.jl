@@ -14,10 +14,6 @@ addons:
     - gfortran
     - libgsl0-dev
 
-branches:
-  only:
-    - master
-
 notifications:
   email: false
 
