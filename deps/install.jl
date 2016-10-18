@@ -18,6 +18,7 @@ function dep_installed(dep)
     println("Installed?")
     Pkg.installed(dep)  # throws an error instead of returning false
     println("Yes!")
+    println(Pkg.installed())
     return true
   catch
     println("No!")
@@ -27,6 +28,7 @@ end
 
 function dep_install(dep, branch)
   println("Installing $dep")
+  println(Pkg.installed())
   dep_installed(dep) || Pkg.clone("$home/$dep.jl.git")
   Pkg.checkout(dep, branch)
   Pkg.build(dep)
@@ -34,9 +36,11 @@ end
 
 function deps_install(deps)
   for dep in keys(deps)
+    println(Pkg.installed())
     dep_install(dep, deps[dep])
   end
 end
 
+println(Pkg.installed())
 deps_install(deps)
 @static if is_unix() deps_install(unix_deps); end
