@@ -16,8 +16,8 @@ const unix_deps = Dict{String, String}(
 function dep_installed(dep)
   try
     println("Installed?")
-    Pkg.installed(dep)  # throws an error instead of returning false
-    println("Yes!")
+    s = Pkg.installed(dep)  # throws an error instead of returning false
+    println("Yes! >$s<")
     println(Pkg.installed())
     return true
   catch
