@@ -1,17 +1,17 @@
 export AbstractExecutionStats, GenericExecutionStats, Printf,
        statsgetfield, statshead, statsline, getStatus
 
-const STATUSES = Dict(:unknown => "unknown",
+const STATUSES = Dict(:unknown     => "unknown",
                       :first_order => "first-order stationary",
-                      :max_eval => "maximum number of function evaluations",
-                      :max_time => "maximum elapsed time",
-                      :max_iter => "maximum iteration",
-                      :not_desc => "not a descent direction",
-                      :neg_pred => "negative predicted reduction",
-                      :small_step => "step too small",
-                      :unbounded => "objective function may be unbounded from below",
-                      :exception => "unhandled exception",
-                      :stalled => "stalled"
+                      :max_eval    => "maximum number of function evaluations",
+                      :max_time    => "maximum elapsed time",
+                      :max_iter    => "maximum iteration",
+                      :not_desc    => "not a descent direction",
+                      :neg_pred    => "negative predicted reduction",
+                      :small_step  => "step too small",
+                      :unbounded   => "objective function may be unbounded from below",
+                      :exception   => "unhandled exception",
+                      :stalled     => "stalled"
                      )
 
 abstract type AbstractExecutionStats end
