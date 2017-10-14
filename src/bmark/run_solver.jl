@@ -57,21 +57,24 @@ Apply a solver to a set of problems.
 
 #### Keyword arguments
 * `prune`: do not include skipped problems in the final statistics (default: `true`)
+* `catch_exceptions`: Passed to `solve_problem`.
 * any other keyword argument accepted by `run_problem()`
 
 #### Return value
 * an `Array(AbstractExecutionStats, nprobs)` where `nprobs` is the number of problems
   in `problems` minus the skipped ones if `prune` is true.
 """
-function solve_problems(solver :: Function, problems :: Any; prune :: Bool=true, kwargs...)
-  display_header()
+function solve_problems(solver :: Function, problems :: Any; prune :: Bool=true,
+                        verbose :: Bool=true, catch_exceptions :: Bool=false,
+                        kwargs...)
+  verbose && display_header()
   nprobs = length(problems)
-  solverstr = split(string(solver), ".")[end]
   stats = []
   k = 0
   for problem in problems
     try
-      s = solve_problem(solver, problem; kwargs...)
+      s = solve_problem(solver, problem, verbose=verbose,
+                        catch_exceptions=catch_exceptions; kwargs...)
       push!(stats, s)
     catch e
       isa(e, SkipException) || rethrow(e)
@@ -94,7 +97,15 @@ Apply a solver to a generic `AbstractNLPModel`.
 * `nlp`: an `AbstractNLPModel` instance
 
 #### Keyword arguments
-Any keyword argument accepted by the solver.
+Any keyword argument accepted by the solver, and
+* `verbose`: Wether to print the execution summary table;
+* `colstats`: Array of symbols indicating what composes the execution summary
+  table. Defaults to essentially all information. `uncstats` and constats` are
+  predefined variables for unconstrained and constrained problems,
+  respectivelly.
+* `catch_exceptions`: If `true`, an exception during the solver execution will
+  cause the exception message to be printed, otherwise the exception is
+  rethrown.
 
 #### Return value
 * an array `[f, g, h]` representing the number of objective evaluations, the number
@@ -102,17 +113,34 @@ Any keyword argument accepted by the solver.
   `nlp` with `solver`.
   Negative values are used to represent failures.
 """
-function solve_problem(solver :: Function, nlp :: AbstractNLPModel; colstats::Array{Symbol} = constats, kwargs...)
+function solve_problem(solver :: Function, nlp :: AbstractNLPModel;
+                       colstats :: Array{Symbol}=constats,
+                       verbose :: Bool=true, catch_exceptions :: Bool=false,
+                       kwargs...)
   args = Dict(kwargs)
   skip = haskey(args, :skipif) ? pop!(args, :skipif) : x -> false
   skip(nlp) && throw(SkipException())
 
   stats = GenericExecutionStats(:exception, nlp)
-  # try
-    stats = solver(nlp; args...)
-  # catch e
-  #   status = :msg in fieldnames(typeof(e)) ? e.msg : string(e)
-  # end
+
+  try
+    stats = solver(nlp; verbose=false, args...)
+    # if nlp.scale_obj
+    #   f /= nlp.scale_obj_factor
+    #   gNorm /= nlp.scale_obj_factor
+    # end
+  catch e
+    if !catch_exceptions
+      rethrow(e)
+    else
+      println(e)
+    end
+  end
+
+  # Remove prefix.name -> name
+  name = split(nlp.meta.name, ".")[end]
+
   display_problem_stats(nlp, stats, colstats=colstats)
+
   return stats
 end
