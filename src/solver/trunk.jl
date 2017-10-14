@@ -18,6 +18,18 @@ type TrunkException <: Exception
   msg  :: String
 end
 
+function trunk_tuning_problem()
+  params = [:acceptance_threshold, :increase_threshold, :decrease_factor,
+            :increase_factor, :armijo_param]
+  x0   = [  1e-4,   0.95, 1/3,  1.5, 1.0e-4]
+  lvar = [0.0001, 0.0001, 0.1,  1.1, 1.0e-4]
+  uvar = [0.9999, 0.9999, 0.9, 10.0, 0.9]
+  c(x) = [x[1] - x[2]]
+  lcon = [-Inf]
+  ucon = [0.0]
+  return params, x0, lvar, uvar, c, lcon, ucon
+end
+
 function trunk(nlp :: AbstractNLPModel;
                atol :: Float64=1.0e-8, rtol :: Float64=1.0e-6,
                max_f :: Int=0,
@@ -25,6 +37,11 @@ function trunk(nlp :: AbstractNLPModel;
                bk_max :: Int=10,
                monotone :: Bool=false,
                nm_itmax :: Int=25,
+               acceptance_threshold :: Real = 1e-4,
+               increase_threshold   :: Real = 0.95,
+               decrease_factor      :: Real = 1.0/3,
+               increase_factor      :: Real = 1.5,
+               armijo_param :: Real = 1.0e-4,
                verbose :: Bool=true)
 
   start_time = time()
@@ -36,15 +53,16 @@ function trunk(nlp :: AbstractNLPModel;
   max_f == 0 && (max_f = max(min(100, 2 * n), 5000))
   cgtol = 1.0  # Must be ≤ 1.
 
-  # Armijo linesearch parameter.
-  β = 1.0e-4
-
   iter = 0
   f = obj(nlp, x)
   ∇f = grad(nlp, x)
   ∇fNorm2 = BLAS.nrm2(n, ∇f, 1)
   ϵ = atol + rtol * ∇fNorm2
-  tr = TrustRegion(min(max(0.1 * ∇fNorm2, 1.0), 100.0))
+  tr = TrustRegion(min(max(0.1 * ∇fNorm2, 1.0), 100.0),
+                   acceptance_threshold = acceptance_threshold,
+                   increase_threshold = increase_threshold,
+                   decrease_factor = decrease_factor,
+                   increase_factor = increase_factor)
 
   # Non-monotone mode parameters.
   # fmin: current best overall objective value
@@ -58,10 +76,12 @@ function trunk(nlp :: AbstractNLPModel;
   # Preallocate xt.
   xt = Array{Float64}(n)
   temp = Array{Float64}(n)
+  s = zeros(n)
 
   optimal = ∇fNorm2 <= ϵ
   tired = neval_obj(nlp) > max_f || elapsed_time > max_time
   stalled = false
+  cg_stats = Krylov.SimpleStats(false, false, Float64[], Float64[], "")
 
   if verbose
     @printf("%4s  %9s  %7s  %7s  %8s  %5s  %2s  %s\n", "Iter", "f", "‖∇f‖", "Radius", "Ratio", "Inner", "bk", "status")
@@ -76,11 +96,17 @@ function trunk(nlp :: AbstractNLPModel;
     # In this particular case, we may use an operator with preallocation.
     H = hess_op!(nlp, x, temp)
     cgtol = max(ϵ, min(0.7 * cgtol, 0.01 * ∇fNorm2))
-    (s, cg_stats) = cg(H, -∇f,
-                       atol=cgtol, rtol=0.0,
-                       radius=get_property(tr, :radius),
-                       itmax=max(2 * n, 50),
-                       verbose=false)
+    try
+      (s, cg_stats) = cg(H, -∇f,
+                         atol=cgtol, rtol=0.0,
+                         radius=get_property(tr, :radius),
+                         itmax=max(2 * n, 50),
+                         verbose=false)
+    catch
+      status = :exception
+      stalled = true
+      continue
+    end
 
     # Compute actual vs. predicted reduction.
     sNorm = BLAS.nrm2(n, s, 1)
@@ -114,9 +140,13 @@ function trunk(nlp :: AbstractNLPModel;
       # slope *= get_property(tr, :radius) / sNorm
       # sNorm = get_property(tr, :radius)
 
-      slope < 0.0 || throw(TrunkException(@sprintf("not a descent direction: slope = %9.2e, ‖∇f‖ = %7.1e", slope, ∇fNorm2)))
+      if slope >= 0.0
+        status = :not_descent
+        stalled = true
+        continue
+      end
       α = 1.0
-      while (bk < bk_max) && (ft > f + β * α * slope)
+      while (bk < bk_max) && (ft > f + armijo_param * α * slope)
         bk = bk + 1
         α /= 1.2
         BLAS.blascopy!(n, x, 1, xt, 1)

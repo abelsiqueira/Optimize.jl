@@ -1,14 +1,15 @@
 export ExecutionStats, statshead, statsline
 
-const STATUS = Dict(:unknown => "unknown",
+const STATUS = Dict(:unknown     => "unknown",
                     :first_order => "first-order stationary",
-                    :max_eval => "maximum number of function evaluations",
-                    :max_time => "maximum elapsed time",
-                    :max_iter => "maximum iteration",
-                    :neg_pred => "negative predicted reduction",
-                    :unbounded => "objective function may be unbounded from below",
-                    :exception => "unhandled exception",
-                    :stalled => "stalled"
+                    :max_eval    => "maximum number of function evaluations",
+                    :max_time    => "maximum elapsed time",
+                    :max_iter    => "maximum iteration",
+                    :neg_pred    => "negative predicted reduction",
+                    :not_descent => "non-descent direction",
+                    :unbounded   => "objective function may be unbounded from below",
+                    :exception   => "unhandled exception",
+                    :stalled     => "stalled"
                    )
 
 type ExecutionStats
