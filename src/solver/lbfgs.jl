@@ -1,10 +1,23 @@
 export lbfgs
 
+function lbfgs_tuning_problem()
+  params = [:linesearch_acceptance, :linesearch_angle]
+  x0     = [1.0e-4, 0.9999]
+  lvar   = [1.0e-4, 0.9]
+  uvar   = [   0.9, 0.9999]
+  c(x) = Float64[]
+  lcon = Float64[]
+  ucon = Float64[]
+  return params, x0, lvar, uvar, c, lcon, ucon
+end
+
 function lbfgs(nlp :: AbstractNLPModel;
                atol :: Float64=1.0e-8, rtol :: Float64=1.0e-6,
                max_f :: Int=0,
                max_time :: Float64=Inf,
                verbose :: Bool=true,
+               linesearch_acceptance :: Real = 1.0e-4,
+               linesearch_angle      :: Real = 0.9999,
                mem :: Int=5)
 
   start_time = time()
@@ -30,19 +43,27 @@ function lbfgs(nlp :: AbstractNLPModel;
 
   optimal = ∇fNorm <= ϵ
   tired = neval_obj(nlp) > max_f || elapsed_time > max_time
+  stalled = false
 
   h = LineModel(nlp, x, ∇f)
 
-  while !(optimal || tired)
+  while !(optimal || tired || stalled)
     d = - H * ∇f
     slope = BLAS.dot(n, d, 1, ∇f, 1)
-    slope < 0.0 || error("Not a descent direction! slope = ", slope)
+    if slope >= 0.0
+      status = :not_descent
+      stalled = true
+      continue
+    end
 
     verbose && @printf("  %8.1e", slope)
 
     redirect!(h, x, d)
     # Perform improved Armijo linesearch.
-    t, good_grad, ft, nbk, nbW = armijo_wolfe(h, f, slope, ∇ft, τ₁=0.9999, bk_max=25, verbose=false)
+    t, good_grad, ft, nbk, nbW = armijo_wolfe(h, f, slope, ∇ft,
+                                              τ₀=linesearch_acceptance,
+                                              τ₁=linesearch_angle,
+                                              bk_max=25, verbose=false)
 
     verbose && @printf("  %4d\n", nbk)
 
