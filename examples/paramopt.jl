@@ -1,10 +1,14 @@
 using CUTEst, Optimize, BenchmarkProfiles, Plots
 pyplot()
 
-#= This is an example of parameter optimization on the solver trunk.
+#= This is an example of parameter optimization.
 =#
-function paramopt(solver = trunk)
-  ps = CUTEst.select(max_var=10, max_con=0, only_free_var=true)
+function paramopt(solver = trunk) # or lbfgs or tron
+  if solver == tron
+    ps = CUTEst.select(max_var=10, max_con=0)
+  else
+    ps = CUTEst.select(max_var=10, max_con=0, only_free_var=true)
+  end
   problems = (CUTEstModel(p) for p in ps)
 
   optimal_parameters = tune(solver, problems,
@@ -18,4 +22,4 @@ function paramopt(solver = trunk)
   png("$solver-vs-opt$solver")
 end
 
-paramopt()
+paramopt(tron)
