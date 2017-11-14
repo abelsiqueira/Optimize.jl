@@ -9,7 +9,8 @@ const STATUS = Dict(:unknown     => "unknown",
                     :not_descent => "non-descent direction",
                     :unbounded   => "objective function may be unbounded from below",
                     :exception   => "unhandled exception",
-                    :stalled     => "stalled"
+                    :stalled     => "stalled",
+                    :smallstep   => "step too small"
                    )
 
 type ExecutionStats

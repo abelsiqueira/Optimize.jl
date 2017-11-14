@@ -5,6 +5,21 @@ using LinearOperators, NLPModels
 
 export tron
 
+function tron_tuning_problem()
+  params = [:line_search_acceptance, :radius_fraction,
+            :cauchy_step_factor, :acceptance_threshold,
+            :decrease_threshold, :increase_threshold,
+            :large_decrease_factor, :small_decrease_factor,
+            :increase_factor]
+  x0   = [1.0e-2,    1.0, 10.0, 0.0001,   0.25,   0.75,   0.25,    0.5,    4.0]
+  lvar = [0.0001, 0.0001,  1.1, 0.0001, 0.0001, 0.0001, 0.0001, 0.0001, 1.0001]
+  uvar = [   0.5,    2.0, 99.9, 0.9999, 0.9999, 0.9999, 0.9999, 0.9999, 10.0]
+  c(x) = [x[1] - x[2]; x[3] - x[4]; x[4] - x[5]; x[7] < x[8]]
+  lcon = [-Inf; -Inf; -Inf; -Inf]
+  ucon = [0.0; 0.0; 0.0; 0.0]
+  return params, x0, lvar, uvar, c, lcon, ucon
+end
+
 """`tron(nlp)`
 
 A pure Julia implementation of a trust-region solver for bound-constrained
@@ -18,14 +33,21 @@ Chih-Jen Lin and Jorge J. Moré, *Newton's Method for Large Bound-Constrained
 Optimization Problems*, SIAM J. Optim., 9(4), 1100–1127, 1999.
 """
 function tron(nlp :: AbstractNLPModel;
-              μ₀ :: Real=1e-2,
-              μ₁ :: Real=1.0,
-              σ :: Real=10.0,
+              line_search_acceptance :: Real = 1e-2,
+              radius_fraction        :: Real = 1.0,
+              cauchy_step_factor     :: Real = 10.0,
+              acceptance_threshold   :: Real = 1e-4,
+              decrease_threshold     :: Real = 0.25,
+              increase_threshold     :: Real = 0.75,
+              large_decrease_factor  :: Real = 0.25,
+              small_decrease_factor  :: Real = 0.5,
+              increase_factor        :: Real = 4.0,
               verbose :: Bool=false,
               itmax :: Int=10_000 * nlp.meta.nvar,
               max_cgiter :: Int=nlp.meta.nvar,
               cgtol :: Real=0.1,
-              timemax :: Real=60.0,
+              max_f :: Int=0,
+              max_time :: Real=60.0,
               atol :: Real=1e-8,
               rtol :: Real=1e-6,
               fatol :: Real=0.0,
@@ -37,6 +59,7 @@ function tron(nlp :: AbstractNLPModel;
   g(x) = grad(nlp, x)
   n = nlp.meta.nvar
 
+  max_f == 0 && (max_f = max(min(100, 2 * n), 5000))
   iter = 0
   start_time = time()
   el_time = 0.0
@@ -58,13 +81,19 @@ function tron(nlp :: AbstractNLPModel;
   ϵ = atol + rtol * πx
   fmin = min(-1.0, fx) / eps(eltype(x))
   optimal = πx <= ϵ
-  tired = iter >= itmax || el_time > timemax
+  tired = iter >= itmax || el_time > max_time || neval_obj(nlp) > max_f
   unbounded = fx < fmin
   stalled = false
   status = :unknown
 
   αC = 1.0
-  tr = TRONTrustRegion(min(max(1.0, 0.1 * norm(πx)), 100))
+  tr = TRONTrustRegion(min(max(1.0, 0.1 * norm(πx)), 100.0),
+                       acceptance_threshold = acceptance_threshold,
+                       decrease_threshold = decrease_threshold,
+                       increase_threshold = increase_threshold,
+                       small_decrease_factor = small_decrease_factor,
+                       large_decrease_factor = large_decrease_factor,
+                       increase_factor = increase_factor)
   if verbose
     @printf("%4s  %9s  %7s  %7s  %7s  %s\n", "Iter", "f", "π", "Radius", "Ratio", "CG-status")
     @printf("%4d  %9.2e  %7.1e  %7.1e\n", iter, fx, πx, get_property(tr, :radius))
@@ -76,7 +105,16 @@ function tron(nlp :: AbstractNLPModel;
     Δ = get_property(tr, :radius)
     H = hess_op!(nlp, xc, temp)
 
-    αC, s = cauchy(x, H, gx, Δ, αC, ℓ, u, μ₀=μ₀, μ₁=μ₁, σ=σ)
+    αC, s, cauchy_status = cauchy(x, H, gx, Δ, αC, ℓ, u,
+                   line_search_acceptance=line_search_acceptance,
+                   radius_fraction=radius_fraction,
+                   step_factor=cauchy_step_factor)
+
+    if cauchy_status != :success
+      status = cauchy_status
+      stalled = true
+      continue
+    end
 
     s, Hs, cgits, cginfo = projected_newton!(x, H, gx, Δ, cgtol, s, ℓ, u, max_cgiter=max_cgiter)
     slope = dot(gx, s)
@@ -115,7 +153,7 @@ function tron(nlp :: AbstractNLPModel;
 
     iter += 1
     el_time = time() - start_time
-    tired = iter >= itmax ||  el_time > timemax
+    tired = iter >= itmax || el_time > max_time || neval_obj(nlp) > max_f
     optimal = πx <= ϵ
     unbounded = fx < fmin
 
@@ -134,11 +172,11 @@ function tron(nlp :: AbstractNLPModel;
                         eval=deepcopy(counters(nlp)))
 end
 
-"""`s = projected_line_search!(x, H, g, d, ℓ, u; μ₀ = 1e-2)`
+"""`s = projected_line_search!(x, H, g, d, ℓ, u; line_search_acceptance = 1e-2)`
 
 Performs a projected line search, searching for a step size `t` such that
 
-    0.5sᵀHs + sᵀg ≦ μ₀sᵀg,
+    0.5sᵀHs + sᵀg ≦ line_search_acceptance * sᵀg,
 
 where `s = P(x + t * d) - x`, while remaining on the same face as `x + d`.
 Backtracking is performed from t = 1.0. `x` is updated in place.
@@ -148,7 +186,8 @@ function projected_line_search!{T <: Real}(x::AbstractVector{T},
                                            g::AbstractVector{T},
                                            d::AbstractVector{T},
                                            ℓ::AbstractVector{T},
-                                           u::AbstractVector{T}; μ₀::Real = 1e-2)
+                                           u::AbstractVector{T};
+                                           line_search_acceptance::Real = 1e-2)
   α = one(T)
   _, brkmin, _ = breakpoints(x, d, ℓ, u)
   nsteps = 0
@@ -162,7 +201,7 @@ function projected_line_search!{T <: Real}(x::AbstractVector{T},
     nsteps += 1
     project_step!(s, x, d, ℓ, u, α)
     slope, qs = compute_Hs_slope_qs!(Hs, H, s, g)
-    if qs <= μ₀ * slope
+    if qs <= line_search_acceptance * slope
       search = false
     else
       α /= 2
@@ -180,21 +219,24 @@ function projected_line_search!{T <: Real}(x::AbstractVector{T},
   return s
 end
 
-"""`α, s = cauchy(x, H, g, Δ, ℓ, u; μ₀ = 1e-2, μ₁ = 1.0, σ=10.0)`
+"""`α, s = cauchy(x, H, g, Δ, ℓ, u; line_search_acceptance = 1e-2,
+                  radius_fraction = 1.0, step_factor=10.0)`
 
 Computes a Cauchy step `s = P(x - α g) - x` for
 
-    min  q(s) = ¹/₂sᵀHs + gᵀs     s.t.    ‖s‖ ≦ μ₁Δ,  ℓ ≦ x + s ≦ u,
+    min  q(s) = ¹/₂sᵀHs + gᵀs     s.t.    ‖s‖ ≦ radius_fraction * Δ,  ℓ ≦ x + s ≦ u,
 
 with the sufficient decrease condition
 
-    q(s) ≦ μ₀sᵀg.
+    q(s) ≦ line_search_acceptance * sᵀg.
 """
 function cauchy{T <: Real}(x::AbstractVector{T},
                            H::Union{AbstractMatrix,AbstractLinearOperator},
                            g::AbstractVector{T},
                            Δ::Real, α::Real, ℓ::AbstractVector{T}, u::AbstractVector{T};
-                           μ₀::Real = 1e-2, μ₁::Real = 1.0, σ::Real = 10.0)
+                           line_search_acceptance::Real = 1e-2,
+                           radius_fraction::Real = 1.0,
+                           step_factor::Real = 10.0)
   # TODO: Use brkmin to care for g direction
   _, _, brkmax = breakpoints(x, -g, ℓ, u)
   n = length(x)
@@ -205,41 +247,42 @@ function cauchy{T <: Real}(x::AbstractVector{T},
 
   # Interpolate or extrapolate
   s_norm = norm(s)
-  if s_norm > μ₁ * Δ
+  if s_norm > radius_fraction * Δ
     interp = true
   else
     slope, qs = compute_Hs_slope_qs!(Hs, H, s, g)
-    interp = qs >= μ₀ * slope
+    interp = qs >= line_search_acceptance * slope
   end
+
+  status = :success
 
   if interp
     search = true
     while search
-      α /= σ
+      α /= step_factor
       project_step!(s, x, g, ℓ, u, -α)
       s_norm = norm(s)
-      if s_norm <= μ₁ * Δ
+      if s_norm <= radius_fraction * Δ
         slope, qs = compute_Hs_slope_qs!(Hs, H, s, g)
-        search = qs >= μ₀ * slope
+        search = qs >= line_search_acceptance * slope
       end
       # TODO: Correctly assess why this fails
       if α < sqrt(nextfloat(zero(α)))
-        throw("α too small (qs = $qs, slope = $slope)")
-        #stalled = true
-        #status = "α too small"
-        #break
+        stalled = true
+        status = :smallstep
+        search = false
       end
     end
   else
     search = true
     αs = α
     while search && α <= brkmax
-      α *= σ
+      α *= step_factor
       project_step!(s, x, g, ℓ, u, -α)
       s_norm = norm(s)
-      if s_norm <= μ₁ * Δ
+      if s_norm <= radius_fraction * Δ
         slope, qs = compute_Hs_slope_qs!(Hs, H, s, g)
-        if qs <= μ₀ * slope
+        if qs <= line_search_acceptance * slope
           αs = α
         end
       else
@@ -250,7 +293,7 @@ function cauchy{T <: Real}(x::AbstractVector{T},
     α = αs
     s = project_step!(s, x, g, ℓ, u, -α)
   end
-  return α, s
+  return α, s, status
 end
 
 """`projected_newton!(x, H, g, Δ, gctol, s, max_cgiter, ℓ, u)`
