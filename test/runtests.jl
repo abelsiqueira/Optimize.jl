@@ -47,3 +47,4 @@ include("solvers/tron.jl")
 # Test ExecutionStats
 include("test_stats.jl")
 include("test_blackbox.jl")
+include("test_sgd.jl")
