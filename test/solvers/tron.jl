@@ -215,7 +215,7 @@ end
   end
 
   @testset "Time limit" begin
-    stats = tron(nlp, timemax=0)
+    stats = tron(nlp, max_time=0)
     @test stats.elapsed_time > 0
     @test stats.status == :max_time
   end
@@ -246,7 +246,7 @@ end
 
   nlp = ADNLPModel(f, x0)
 
-  stats = tron(nlp, timemax=600)
+  stats = tron(nlp, max_time=600)
   @test isapprox(stats.solution, ones(n), rtol=1e-5*n)
   @test isapprox(stats.objective, 1.0, rtol=1e-3)
   @test stats.dual_feas < 1e-3*n
@@ -254,7 +254,7 @@ end
 
   nlp = ADNLPModel(f, x0, lvar=zeros(n), uvar=0.3*ones(n))
 
-  stats = tron(nlp, timemax=600)
+  stats = tron(nlp, max_time=600)
   @test stats.dual_feas < 1e-3*n
   @test stats.status == :first_order
 end
@@ -269,7 +269,7 @@ end
     @info @sprintf("%8s  %5s  %4s  %s\n", "Problem", "n", "type", stline)
     for p in problems
       nlp = CUTEstModel(p)
-      stats = tron(nlp, timemax=3.0)
+      stats = tron(nlp, max_time=3.0)
       finalize(nlp)
 
       ctype = length(nlp.meta.ifree) == nlp.meta.nvar ? "unc" : "bnd"

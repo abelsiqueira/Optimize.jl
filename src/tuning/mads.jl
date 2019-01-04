@@ -28,7 +28,7 @@ end
 # qₜℓ
 function adjhalton(t :: Int, n :: Int, ℓ :: Int)
   ut = halton(t, n)
-  q = 2ut - 1
+  q = 2ut .- 1
   #α = sqrt(2^abs(ℓ)/n) - 0.5
   j = -1
   α = 0.0

@@ -21,7 +21,7 @@ function tune(solver :: Function, problems :: Any;
               initial :: Array{<: Any} = [],
               lower :: Vector = Float64[],
               upper :: Vector = Float64[],
-              constraints :: Nullable{Function} = Nullable{Function}(),
+              constraints :: Union{Function,Nothing} = nothing,
               conslower :: Vector = Float64[],
               consupper :: Vector = Float64[],
               flags :: Array{Symbol} = [:auto],
@@ -97,12 +97,12 @@ function tune(solver :: Function, problems :: Any;
       for i = 1:length(consupper)
         ucon[i] = consupper[i]
       end
-      if !isnull(constraints)
+      if constraints != nothing
         error("To change the constraints, use :replace_constraints")
       end
     elseif :replace_constraints in flags
       params, lcon, ucon = parameters, conslower, consupper
-      c = isnull(constraints) ? ()->() : get(constraints)
+      c = constraints == nothing ? ()->() : get(constraints)
     end
     # TODO: Allow adding additional constraints
   end
@@ -155,7 +155,7 @@ function tune(solver :: Function, problems :: Any;
     end
     return s
   end
-  tnlp = SimpleNLPModel(f, x0, lvar=lvar, uvar=uvar, c=c, lcon=lcon, ucon=ucon)
+  tnlp = ADNLPModel(f, x0, lvar=lvar, uvar=uvar, c=c, lcon=lcon, ucon=ucon)
   x, _ = blackbox(tnlp, verbose=bbverbose, max_f=bbmax_f, tol=bbtol)
 
   if verbose

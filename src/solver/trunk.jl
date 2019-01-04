@@ -14,7 +14,7 @@
 export trunk
 
 "Exception type raised in case of error inside Trunk."
-type TrunkException <: Exception
+struct TrunkException <: Exception
   msg  :: String
 end
 
@@ -96,6 +96,7 @@ function trunk(nlp :: AbstractNLPModel;
     # In this particular case, we may use an operator with preallocation.
     H = hess_op!(nlp, x, temp)
     cgtol = max(rtol, min(0.1, 0.9 * cgtol, sqrt(∇fNorm2)))
+    local s
     try
       (s, cg_stats) = cg(H, -∇f,
                          atol=atol, rtol=cgtol,
