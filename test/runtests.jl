@@ -1,11 +1,11 @@
 using Test, NLPModels, NLPModelsJuMP, OptimizationProblems, Optimize, LinearAlgebra,
       SparseArrays
 
-include("simple_dixmaanj.jl")
+include("dixmaanj.jl")
 
-models = [simple_dixmaanj(),
+models = [DIXMAANJ(),
           MathProgNLPModel(dixmaanj(), name="dixmaanj"),
-          ADNLSModel(x->[x[1] - 1; 10 * (x[2] - x[1]^2)], [-1.2; 1.0], 2)
+          ADNLPModel(x->[x[1] - 1; 10 * (x[2] - x[1]^2)], 2, [-1.2; 1.0])
          ]
 @static if Sys.isunix()
   using CUTEst
@@ -25,7 +25,7 @@ for model in models
 end
 
 # test benchmark helpers, skip constrained problems (hs7 has constraints)
-solve_problem(trunk, simple_dixmaanj(), monotone=false, colstats=uncstats)
+solve_problem(trunk, DIXMAANJ(), monotone=false, colstats=uncstats)
 probs = [dixmaane, dixmaanf, dixmaang, dixmaanh, dixmaani, dixmaanj, hs7]
 
 models = (MathProgNLPModel(p(99), name=string(p)) for p in probs)
