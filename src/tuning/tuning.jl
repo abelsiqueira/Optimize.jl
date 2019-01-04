@@ -155,6 +155,7 @@ function tune(solver :: Function, problems :: Any;
     end
     return s
   end
+  # TODO: Create NLP manually (how much improvement will it bring?)
   tnlp = ADNLPModel(f, x0, lvar=lvar, uvar=uvar, c=c, lcon=lcon, ucon=ucon)
   x, _ = blackbox(tnlp, verbose=bbverbose, max_f=bbmax_f, tol=bbtol)
 
